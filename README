@@ -1,0 +1,145 @@
+*About
+
+  Yugo Murawaki. 2016. Statistical Modeling of Creole Genesis. In
+  Proceedings of the 2016 Conference of the North American Chapter of
+  the Association for Computational Linguistics: Human Language
+  Technologies (NAACL-HLT 2016), pp. 1329-1339.
+
+
+
+*Requirements
+
+-Python2
+  - scikit-learn
+  - numpy
+  - matplotlib
+- R (for missing data imputation)
+  - missMDA package
+- WALS data
+  - git clone 'comp-typology' and follow the instructions in MEMO
+
+  **TODO** remove dependencies on 'comp-typology'
+
+
+
+*Data setup
+
+1. Download
+  % cd data/creole
+  % wget http://zenodo.org/record/11135/files/apics-v2013.zip
+
+
+2. Unzip apics-v2013.zip to obtain data.zip
+
+  % unzip apics-v2013.zip clld-apics-1a306df/data.zip
+
+3. Unzip data.zip to obtain CSV files
+
+  % mv clld-apics-1a306df apics
+  % cd apics
+  % unzip data.zip
+
+
+4. Convert various CSV files into a JSON file
+
+  % cd scripts/format_apics
+  % python apics.py ../../data/creole/apics ../../data/creole/apics_langs.json ../../data/creole/apics_features.json
+
+
+5. Merge APiCS langs with WALS langs
+   (see MEMO for how to preprocess WALS data)
+
+  % python wals_apics.py ../../data/wals/langs_aug.json ../../data/wals/flist_aug.json ../../data/creole/apics_langs.json ../../data/creole/merged_full.json ../../data/creole/flist.json
+
+  Notes:
+  - wals_value_number may not be defined in valueset
+    - An APiCS feature can take multiple values (freq < 100)
+    - Sometimes no corresponding value is defined in WALS
+  - We drop languages classified as "Sign Languages" or "Creoles and Pidgings",
+    but some contact languages (e.g., Afrikaans) remain.
+
+
+6. Filter out languages by feature coverage
+
+  % python ../format_wals/lthres.py --lthres=0.3 ../../data/creole/merged_full.json ../../data/creole/flist.json ../../data/creole/merged.json
+
+
+
+7. Missing value imputation
+
+  % python mv/json2tsv.py ../data/creole/merged.json ../data/creole/flist.json ../data/creole/merged.tsv
+  % R --vanilla -f mv/impute_mca.r --args ../data/creole/merged.tsv ../data/creole/merged.filled.tsv
+  % python mv/tsv2json.py ../data/creole/merged.json ../data/creole/merged.filled.tsv ../data/creole/flist.json ../data/creole/merged.filled.json
+
+
+
+8 Add categorical vectors
+
+  % python ../format_wals/catvect.py ../../data/creole/merged.filled.json ../../data/creole/flist.json ../../data/creole/merged.filled.cat.json
+
+
+
+9. Add binarized vects
+
+  % python ../format_wals/binarize.py ../../data/creole/merged.filled.cat.json ../../data/creole/flist.json ../../data/creole/merged.filled.catbin.json ../../data/creole/flist_bin.json
+
+
+10. Remove pidgin languages
+
+  % python format_apics/remove_pidgins.py ../data/creole/merged.filled.catbin.json ../data/creole/apics_features.json ../data/creole/nonpidgins.filled.catbin.json
+
+
+
+*Binary classification (creoles vs. non-creoles) and PCA plots
+
+1. Mark IDs for cross-validation
+
+  % python format_wals/mark_cv.py --seed=20 --cv=5 ../data/creole/nonpidgins.filled.catbin.json ../data/creole/nonpidgins.filled.catbin.cv5.json 
+
+
+2. Perform SVM classificatoin
+
+  % python svm.py --seed=20 --cv=5 ../data/creole/nonpidgins.filled.catbin.cv5.json 2>&1 | tee ../data/creole/nonpidgins.filled.catbin.cv5.svm.log
+
+
+3. PCA plots
+
+  **TODO**: replace hard-coded vars with command-line arguments
+
+  % python format_apics/pca.py --plot_type=0 --output ../data/creole/pca12.pdf ../data/creole/nonpidgins.filled.catbin.json
+  % python format_apics/pca.py --plot_type=0 --output ../data/creole/pca12C.pdf ../data/creole/nonpidgins.filled.catbin.json
+  % python format_apics/pca.py --plot_type=0 --output ../data/creole/pca12N.pdf ../data/creole/nonpidgins.filled.catbin.json
+
+
+
+*Mixture models
+
+1. MONO model
+
+  % python mixture_discrete.py --seed=20 --iter=10000 --dump=../data/creole/mono.dump.json ../data/creole/merged.filled.catbin.json ../data/creole/flist.json ../data/creole/sources.tsv 2>&1 >../data/creole/mono.assign.json | tee ../data/creole/mono.log
+
+  % python format_apics/simplex.py --mtype=mono --output ../data/creole/mono.lang.pdf ../data/creole/mono.assign.json
+
+  **TODO** remove hard-coded vars
+
+  % python format_apics/assign_stat.py ../data/creole/mono.assign.json
+
+
+2. FACT model
+
+  % python mixture_discrete.py --seed=20 --iter=10000 --dump ../data/creole/discrete2_2.dump.json ../data/creole/merged.filled.catbin.json ../data/creole/flist.json ../data/creole/sources.tsv 2>&1 >../data/creole/discrete2.assign.json | tee ../data/creole/discrete2.log
+
+  % python format_apics/simplex.py -mtype=fact --type=theta --output ../data/creole/discrete2.theta.pdf ../data/creole/discrete2.assign.json
+  % python format_apics/simplex.py -mtype=fact --type=lang --output ../data/creole/discrete2.lang.pdf ../data/creole/discrete2.assign.json
+  % python format_apics/simplex.py -mtype=fact --type=lang --output ../data/creole/discrete2.lang.pdf ../data/creole/discrete2.assign.json
+
+  % python format_apics/assign_stat.py ../data/creole/discrete2.assign.json
+
+  **TODO** remove hard-coded vars
+
+  % python format_apics/assign_stat_fact.py --type=feature ../data/creole/discrete2.assign.json
+  % python format_apics/assign_stat_fact.py --type=lang ../data/creole/discrete2.assign.json
+
+  **TODO** remove hard-coded vars
+
+  % python format_apics/feature_stat.py --type=lang ../data/creole/discrete2.assign.json ../data/creole/merged.filled.catbin.json ../data/creole/flist.json
