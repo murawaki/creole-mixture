@@ -15,8 +15,8 @@ class DirichletDistribution(object):
 
     STOP_DIFF = 0.01
     ITER_MAX = 10
-    ALPHA_MIN = 0.001
-    ALPHA_MAX = 1E105
+    ALPHA_MIN = 1E-5
+    ALPHA_MAX = 1E5
 
     def __init__(self, K, alpha=5.0):
         self.K = K
@@ -43,6 +43,11 @@ class DirichletDistribution(object):
         prob = (self.voc[obj] + self.alpha) / (self.K * self.alpha + self.marginal)
         return prob if prob > 1e-95 else 1e-95  # check underflow
 
+    def problist(self):
+        problist = (self.voc + self.alpha) / (self.K * self.alpha + self.marginal)
+        problist = np.where(problist > 1e-95, problist, 1e-95)
+        return problist
+
     def draw(self):
         r = np.random.uniform(0, self.K * self.alpha + self.marginal)
         for k, v in enumerate(self.voc):
@@ -60,16 +65,17 @@ class DirichletDistribution(object):
     def remove(self, obj):
         assert 0 <= obj < self.K
         self.voc[obj] -= 1
-        assert self.voc[obj] >= 0, "removal of non-existent item: %s" % object
+        assert self.voc[obj] >= 0, "removal of non-existent item: %s" % obj
         self.marginal -= 1
         assert self.marginal >= 0, "negative marginal: %d" % self.marginal
 
-    def log_marginal(self):
+    def log_marginal(self, temp_alpha=None):
+        alpha = self.alpha if temp_alpha is None else temp_alpha
         ll = 0.0
-        ll += gammaln(self.alpha * self.K) - gammaln(self.alpha * self.K + self.marginal)
-        lgam_alpha = gammaln(self.alpha)
+        ll += gammaln(alpha * self.K) - gammaln(alpha * self.K + self.marginal)
+        lgam_alpha = gammaln(alpha)
         for v in self.voc:
-            ll += gammaln(self.alpha + v) - lgam_alpha
+            ll += gammaln(alpha + v) - lgam_alpha
         return ll
 
     def sample_hyper(self):
@@ -81,7 +87,7 @@ class DirichletDistribution(object):
         while diff >= DirichletDistribution.STOP_DIFF \
               and count < DirichletDistribution.ITER_MAX:
             count += 1
-            num = self.K * psi(self.K * self.alpha + self.marginal) - psi(self.K * self.alpha)
+            num = self.K * (psi(self.K * self.alpha + self.marginal) - psi(self.K * self.alpha))
             denom = 0.0
             for v in self.voc:
                 denom += psi(v + self.alpha)
@@ -106,11 +112,12 @@ class DirichletDistribution(object):
             count += 1
             num = denom = 0.0
             for dist in dlist:
-                num += dist.K * psi(dist.K * dist.alpha + dist.marginal) - psi(dist.K * dist.alpha)
+                num += psi(dist.K * alpha + dist.marginal) - psi(dist.K * alpha)
                 for v in dist.voc:
-                    denom += psi(v + dist.alpha)
-                denom -= dist.K * psi(dist.alpha)
-                denom *= dist.alpha
+                    denom += psi(v + alpha)
+                denom -= dist.K * psi(alpha)
+            num *= dist.K
+            denom *= alpha
             alpha_old = alpha
             alpha = denom / num
             if alpha < DirichletDistribution.ALPHA_MIN:
@@ -123,9 +130,6 @@ class DirichletDistribution(object):
         return alpha
 
 class DirichletDistributionGammaPrior(DirichletDistribution):
-    """
-    Dirichlet distribution with slice sampling for the hyperparameter
-    """
     def __init__(self, K, alpha=5.0, alpha_a=1.0, alpha_b=1.0):
         super(DirichletDistributionGammaPrior, self).__init__(self, K, alpha=5.0)
         self.alpha_a = alpha_a
@@ -147,13 +151,14 @@ class DirichletDistributionGammaPrior(DirichletDistribution):
             "alpha_b": self.alpha_b,
         }
 
-    def log_marginal(self, temp_alpha=None):
+    def log_marginal(self, temp_alpha=None, calc_alpha=True):
         ll = super(DirichletDistributionGammaPrior, self).log_marginal()
-        if temp_alpha is not None:
-            alpha = temp_alpha
-        else:
-            alpha = self.alpha
-        ll += gamma.logpdf(alpha, self.alpha_a, scale=self.alpha_b)
+        if calc_alpha:
+            if temp_alpha is not None:
+                alpha = temp_alpha
+            else:
+                alpha = self.alpha
+            ll += gamma.logpdf(alpha, self.alpha_a, scale=self.alpha_b)
         return ll
 
     def sample_hyper(self):
@@ -205,7 +210,7 @@ class KDirichletProcess(DirichletDistribution):
         self.alpha_b = alpha_b
         self.marginal = 0
         self.table_marginal = 0
-        for i in xrange(self.K):
+        for i in range(self.K):
             self.histograms.append([])
 
     @classmethod
@@ -298,9 +303,9 @@ class KDirichletProcess(DirichletDistribution):
         ll = 0.0
         log_alpha = np.log(self.alpha)
         ll += gammaln(self.alpha) - gammaln(self.alpha + self.marginal)
-	ll += self.table_marginal * log_alpha
+        ll += self.table_marginal * log_alpha
 	# prob. of sitting at existing tables
-        for obj in xrange(self.K):
+        for obj in range(self.K):
             for k, v in enumerate(self.histograms[obj]):
                 if v <= 1:
                     continue
